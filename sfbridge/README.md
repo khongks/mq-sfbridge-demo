@@ -1,17 +1,19 @@
-Before you build the image, replace these files in the folder ~/mq-sfbridge-demo/sfbridge
+## Before you build the image, replace these files in the folder ~/mq-sfbridge-demo/sfbridge
 
 1) AMQCLCHL.TAB
 2) keystore.jks
 
-To build the image
+## To build the image
 
+<code>
 docker build -t mqsfbridge \
 --build-arg runmqsfb_QueueManager="QUEUEMGR" \
 --build-arg runmqsfb_MQBaseTopic="/sf" \
 --build-arg runmqsfb_MQChannel="" \
 .
+</code>
 
-  Note the list of ARGs you are configured when you build the image:
+  ### Note the list of ARGs you are configured when you build the image:
   
   - runmqsfb_QueueManager
   - runmqsfb_MQBaseTopic
