@@ -5,13 +5,13 @@
 
 ## To build the image
 
-<code>
+``
 docker build -t mqsfbridge \
 --build-arg runmqsfb_QueueManager="QUEUEMGR" \
 --build-arg runmqsfb_MQBaseTopic="/sf" \
 --build-arg runmqsfb_MQChannel="" \
 .
-</code>
+``
 
   ### Note the list of ARGs you are configured when you build the image:
   
