@@ -31,24 +31,18 @@ LABEL summary="IBM MQ Advanced Server" \
       base-image-release=$BASE_TAG
 
 # The URL to download the MQ installer from in tar.gz format
-# ARG MQ_URL=http://host.docker.internal:9000/IBM_MQ_9.3.0.2_UBUNTU_X86-64.tar.gz
 ARG MQ_URL=http://172.17.0.1:9000/IBM_MQ_9.3.0.2_LINUX_X86-64.tar.gz
 
 # The MQ packages to install
-# ARG MQ_PACKAGES="MQSeriesRuntime-*.rpm MQSeriesJava-*.rpm MQSeriesJRE-*.rpm MQSeriesSFBridge-*.rpm" 
-ARG MQ_PACKAGES="MQSeriesSFBridge-*.rpm" 
+ARG MQ_PACKAGES="MQSeriesRuntime-*.rpm MQSeriesJava-*.rpm MQSeriesJRE-*.rpm MQSeriesSFBridge-*.rpm" 
 
-EXTRA_RPMS="bash bc ca-certificates file findutils gawk glibc-common grep ncurses-compat-libs passwd procps-ng sed shadow-utils tar util-linux which"
-
-RUN \ 
-  # Install additional packages required by MQ, this install process and the runtime scripts  
-   && yum -y install --setopt install_weak_deps=false ${EXTRA_RPMS} \
-   && yum -y clean all \
-   && rm -rf /var/cache/yum/* \
+# Install additional packages required by MQ, this install process and the runtime scripts
+RUN microdnf --disableplugin=subscription-manager install bash bc ca-certificates file findutils gawk glibc-common grep ncurses-compat-libs passwd procps-ng sed shadow-utils tar util-linux which rpm-build \
+   && microdnf --disableplugin=subscription-manager clean all \
   # Download and extract the MQ installation files
    && export DIR_EXTRACT=/tmp/mq \
    && mkdir -p ${DIR_EXTRACT} \
-   && cd ${DIR_EXTRACT} \
+   && cd ${DIR_EXTRACT} \ 
    && curl -LO $MQ_URL \
    && tar -zxvf ./*.tar.gz \
   # Recommended: Create the mqm user ID with a fixed UID and group, so that the file permissions work between different images
@@ -60,7 +54,9 @@ RUN \
   # Accept the MQ license
    && ${MQLICENSE} -text_only -accept \
   # Install MQ using the RPM packages
-   && rpm -ivh $MQ_PACKAGES \
+   && cd MQServer \
+   && rpm -Uvh $MQ_PACKAGES \
+   && cd .. \
   # Recommended: Set the default MQ installation (makes the MQ commands available on the PATH)
    && /opt/mqm/bin/setmqinst -p /opt/mqm -i \
   # Optional: Set these values for the Bluemix Vulnerability Report
