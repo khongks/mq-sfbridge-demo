@@ -1,0 +1,153 @@
+# © Copyright IBM Corporation 2015, 2018
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ARG BASE_IMAGE=registry.access.redhat.com/ubi8/ubi-minimal
+ARG BASE_TAG=8.7-1049.1675784874
+ARG GO_WORKDIR=/opt/app-root/src/go/src/github.com/ibm-messaging/mq-container
+ARG MQ_ARCHIVE="downloads/9.3.2.0-IBM-MQ-Advanced-for-Developers-Non-Install-LinuxX64.tar.gz
+
+FROM ubuntu:22.04
+
+LABEL "ProductID"="98102d16795c4263ad9ca075190a2d4d" \
+      "ProductName"="IBM MQ Advanced" \
+      "ProductVersion"="9.3.0.2"
+
+# The URL to download the MQ installer from in tar.gz format
+# ARG MQ_URL=http://host.docker.internal:9000/IBM_MQ_9.3.0.2_UBUNTU_X86-64.tar.gz
+ARG MQ_URL=http://172.17.0.1:9000/IBM_MQ_9.3.0.2_UBUNTU_X86-64.tar.gz
+
+# The MQ packages to install
+ARG MQ_PACKAGES="ibmmq-sfbridge"
+
+RUN export DEBIAN_FRONTEND=noninteractive \
+  # Install additional packages required by MQ, this install process and the runtime scripts
+  && apt-get update -y \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    coreutils \
+    curl \
+    debianutils \
+    file \
+    findutils \
+    gawk \
+    grep \
+    libc-bin \
+    lsb-release \
+    mount \
+    passwd \
+    procps \
+    sed \
+    tar \
+    util-linux \
+  # Download and extract the MQ installation files
+   && export DIR_EXTRACT=/tmp/mq \
+   && mkdir -p ${DIR_EXTRACT} \
+   && cd ${DIR_EXTRACT} \
+   && curl -LO $MQ_URL \
+   && tar -zxvf ./*.tar.gz \
+  # Recommended: Remove packages only needed by this script
+   && apt-get purge -y ca-certificates curl \
+  # Recommended: Remove any orphaned packages
+   && apt-get autoremove -y --purge \
+  # Recommended: Create the mqm user ID with a fixed UID and group, so that the file permissions work between different images
+   && groupadd --system --gid 999 mqm \
+   && useradd --system --uid 999 --gid mqm mqm \
+   && usermod -G mqm root \
+  # Find directory containing .deb files
+   && export DIR_DEB=$(find ${DIR_EXTRACT} -name "*.deb" -printf "%h\n" | sort -u | head -1) \
+  # Find location of mqlicense.sh
+   && export MQLICENSE=$(find ${DIR_EXTRACT} -name "mqlicense.sh") \
+  # Accept the MQ license
+   && ${MQLICENSE} -text_only -accept \
+   && echo "deb [trusted=yes] file:${DIR_DEB} ./" > /etc/apt/sources.list.d/IBM_MQ.list \
+  # Install MQ using the DEB packages
+   && apt-get update \
+   && apt-get install -y $MQ_PACKAGES \
+  # Remove 32-bit libraries from 64-bit container
+   && find /opt/mqm /var/mqm -type f -exec file {} \; | awk -F: '/ELF 32-bit/{print $1}' | xargs --no-run-if-empty rm -f \
+  # Remove tar.gz files unpacked by RPM postinst scripts
+   && find /opt/mqm -name '*.tar.gz' -delete \
+  # Recommended: Set the default MQ installation (makes the MQ commands available on the PATH)
+   && /opt/mqm/bin/setmqinst -p /opt/mqm -i \
+  # Clean up all the downloaded files
+   && rm -f /etc/apt/sources.list.d/IBM_MQ.list \
+  && rm -rf ${DIR_EXTRACT} \
+  # Apply any bug fixes not included in base Ubuntu or MQ image.
+  # Don't upgrade everything based on Docker best practices https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#run
+   && apt-get upgrade -y libsystemd0 systemd systemd-sysv libudev1 \
+  # End of bug fixes
+   && rm -rf /var/lib/apt/lists/* \
+  # Optional: Update the command prompt with the MQ version
+   && echo "mq:$(dspmqver -b -f 2)" > /etc/debian_chroot \
+   && rm -rf /var/mqm \
+  # Optional: Set these values for the Bluemix Vulnerability Report
+   && sed -i 's/PASS_MAX_DAYS\t99999/PASS_MAX_DAYS\t90/' /etc/login.defs \
+   && sed -i 's/PASS_MIN_DAYS\t0/PASS_MIN_DAYS\t1/' /etc/login.defs \
+   && sed -i 's/password\t\[success=1 default=ignore\]\tpam_unix\.so obscure sha512/password\t[success=1 default=ignore]\tpam_unix.so obscure sha512 minlen=8/' /etc/pam.d/common-password
+
+ENV LANG=en_US.UTF-8
+
+#Create directory for MQ Salesforce bridge config files
+RUN mkdir /etc/mqm \
+   && mkdir -p /var/mqm/qmgrs/TS1 \
+   && mkdir -p /var/mqm/qmgrs/TS1/ssl \
+   && mkdir -p /var/mqm/qmgrs/TS1/log
+
+#Copy MQ Salesforce bridge configuration and run scripts
+COPY mqsf-configure-sfbridge.sh /usr/local/bin/mqsf-config
+COPY mqsf-run-sfbridge.sh /usr/local/bin/mqsf-run
+COPY AMQCLCHL.TAB /var/mqm/qmgrs/TS1/AMQCLCHL.TAB
+COPY keystore.jks /var/mqm/qmgrs/TS1/ssl/keystore.jks
+
+#Make executable
+RUN chmod u+x /usr/local/bin/mqsf-config \
+   && chmod u+x /usr/local/bin/mqsf-run
+
+#Assign build args for MQ Salesforce bridge configuration
+ARG runmqsfb_QueueManager
+ARG runmqsfb_MQBaseTopic
+ARG runmqsfb_MQChannel
+ARG runmqsfb_MQConname
+ARG runmqsfb_MQDLQname
+ARG runmqsfb_MQCCDTURL
+ARG runmqsfb_JndiClass
+ARG runmqsfb_JndiProvider
+ARG runmqsfb_MQUserName
+ARG runmqsfb_MQPassword
+ARG runmqsfb_SFUserName
+ARG runmqsfb_SFPassword
+ARG runmqsfb_SFToken
+ARG runmqsfb_SFEndpoint
+ARG runmqsfb_SFConsumerKey
+ARG runmqsfb_SFConsumerSecret
+ARG runmqsfb_KeyStoreFileName
+ARG runmqsfb_KeyStorePassword
+ARG runmqsfb_TrustedStoreFileName
+ARG runmqsfb_TrustedStorePassword:
+ARG runmqsfb_UseTLSforMQ
+ARG runmqsfb_PushTopics
+ARG runmqsfb_PlatformEvents
+ARG runmqsfb_MonitorInterval
+ARG runmqsfb_QoS
+ARG runmqsfb_MQSubscribe
+ARG runmqsfb_AppDataFormat
+ARG runmqsfb_StartupWait
+ARG runmqsfb_RuntimeLogFile
+
+#Configure template file for MQ Salesforce bridge
+RUN /usr/local/bin/mqsf-config
+
+#Set entrypoint for MQ Salesforce bridge runtime
+ENTRYPOINT ["mqsf-run"]
